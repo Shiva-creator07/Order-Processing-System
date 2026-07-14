@@ -1,0 +1,48 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: payment-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/payment_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+  cloud:
+    function:
+      definition: paymentProcessor
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9092
+          auto-create-topics: true
+      bindings:
+        paymentProcessor-in-0:
+          destination: inventory.events
+          content-type: application/json
+          group: payment-service-group
+        paymentProcessor-out-0:
+          destination: payment.events
+          content-type: application/json
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.orderprocessing: INFO
+
+# Simulated payment failure rate (0.0 - 1.0), used to make the demo realistic
+payment:
+  simulated-failure-rate: 0.1
