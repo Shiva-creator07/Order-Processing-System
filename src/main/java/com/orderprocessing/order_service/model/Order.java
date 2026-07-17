@@ -37,6 +37,9 @@ public Order() {
     this.totalAmount = totalAmount;
     }
 
+    public UUID getId() {
+    return id;
+}
     public String getCustomerId() {
     return customerId;
 }
