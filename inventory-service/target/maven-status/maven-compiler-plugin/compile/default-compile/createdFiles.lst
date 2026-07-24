@@ -1,0 +1,7 @@
+com/orderprocessing/inventory/events/InventoryResultEvent.class
+com/orderprocessing/inventory/controller/InventoryController.class
+com/orderprocessing/inventory/InventoryServiceApplication.class
+com/orderprocessing/inventory/model/InventoryItem.class
+com/orderprocessing/inventory/repository/InventoryRepository.class
+com/orderprocessing/inventory/streams/InventoryEventProcessor.class
+com/orderprocessing/inventory/events/OrderCreatedEvent.class

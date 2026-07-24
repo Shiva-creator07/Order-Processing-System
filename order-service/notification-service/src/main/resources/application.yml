@@ -1,0 +1,38 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: notification-service
+
+  cloud:
+    function:
+      definition: orderCreatedNotifier;inventoryResultNotifier;paymentResultNotifier
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9092
+          auto-create-topics: true
+      bindings:
+        orderCreatedNotifier-in-0:
+          destination: order.created
+          content-type: application/json
+          group: notification-service-group
+        inventoryResultNotifier-in-0:
+          destination: inventory.events
+          content-type: application/json
+          group: notification-service-group
+        paymentResultNotifier-in-0:
+          destination: payment.events
+          content-type: application/json
+          group: notification-service-group
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.orderprocessing: INFO

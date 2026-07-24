@@ -1,0 +1,7 @@
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/InventoryServiceApplication.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/controller/InventoryController.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/events/InventoryResultEvent.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/events/OrderCreatedEvent.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/model/InventoryItem.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/repository/InventoryRepository.java
+/Users/shivanshmishra/projects/order-processing-system/inventory-service/src/main/java/com/orderprocessing/inventory/streams/InventoryEventProcessor.java

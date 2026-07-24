@@ -1,0 +1,51 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: order-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/order_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  cloud:
+    function:
+      definition: inventoryResultConsumer;paymentResultConsumer
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9092
+          auto-create-topics: true
+      bindings:
+        orderCreatedSupplier-out-0:
+          destination: order.created
+          content-type: application/json
+        inventoryResultConsumer-in-0:
+          destination: inventory.events
+          content-type: application/json
+          group: order-service-group
+        paymentResultConsumer-in-0:
+          destination: payment.events
+          content-type: application/json
+          group: order-service-group
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.orderprocessing: INFO
