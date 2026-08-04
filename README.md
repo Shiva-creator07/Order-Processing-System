@@ -1,173 +1,154 @@
-# Event-Driven Order Processing System
+# Order Processing System
 
-A choreographed-saga order processing backend built with Spring Boot, Spring Cloud Stream, and
-Kafka. Four independently deployable services communicate only through events — no service calls
-another service's REST API directly.
+An event-driven order processing system built with **Spring Boot**, **Apache Kafka**, **PostgreSQL**, and **Docker Compose**, implementing a **choreographed saga pattern** across four independent microservices.
 
-```
-                         ┌──────────────────┐
-        POST /orders     │                  │
-   ─────────────────────►│  order-service   │◄────────────────┐
-                          │  (order_db)      │                 │
-                          └────────┬─────────┘                 │
-                                   │ publishes                 │ consumes
-                                   ▼                            │
-                            topic: order.created                │
-                                   │                            │
-                    ┌──────────────┼───────────────┐            │
-                    ▼              ▼               ▼            │
-           ┌─────────────────┐          ┌────────────────────┐ │
-           │ inventory-service│          │notification-service│ │
-           │ (inventory_db)   │          │   (stateless)       │ │
-           └────────┬─────────┘          └────────────────────┘ │
-                     │ publishes                                │
-                     ▼                                          │
-              topic: inventory.events ──────────────────────────┤
-                     │                                          │
-                     ▼                                          │
-           ┌──────────────────┐        ┌─────────────────────┐  │
-           │  payment-service │        │ notification-service│  │
-           │  (payment_db)    │        │                      │  │
-           └────────┬─────────┘        └─────────────────────┘  │
-                     │ publishes                                │
-                     ▼                                          │
-              topic: payment.events ─────────────────────────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ notification-service│
-           └─────────────────────┘
-```
+Rather than relying on a central orchestrator, each service reacts to events published by the others, maintains its own database, and publishes its own result events — including compensating actions when something fails downstream.
 
-## The saga, step by step
+---
 
-1. **Client calls `POST /api/orders`** on order-service. An `Order` row is saved with status
-   `PENDING` and an `OrderCreatedEvent` is published to `order.created`.
-2. **inventory-service** consumes `order.created`, checks stock in its own Postgres database,
-   reserves (or fails to reserve) the requested quantity, and publishes an `InventoryResultEvent`
-   (`RESERVED` / `FAILED`) to `inventory.events`.
-3. **payment-service** consumes `inventory.events`. It only attempts a (simulated) charge if
-   inventory was `RESERVED` — no point charging a customer for stock that doesn't exist. It
-   publishes a `PaymentResultEvent` (`COMPLETED` / `FAILED`) to `payment.events`.
-4. **order-service** also consumes `inventory.events` and `payment.events` to update the order's
-   status as the saga progresses: `PENDING → INVENTORY_RESERVED → CONFIRMED`, or
-   `→ INVENTORY_FAILED/CANCELLED` / `→ PAYMENT_FAILED` on the unhappy paths.
-5. **notification-service** independently fans in from all three topics and logs a simulated
-   customer notification for each meaningful state change (order received, stock issue, payment
-   result). It has no database — it's a pure event listener, which is the point: adding a new
-   side-effect to the system required zero changes to any other service.
-
-This is a **choreographed saga**, not orchestration — there's no central coordinator telling
-services what to do. Each service reacts to events and decides its own next action. That's a
-deliberate design choice worth being able to defend in an interview (vs. an orchestrator/saga
-manager approach), see "Talking points" below.
-
-## Stack
-
-- Java 17, Spring Boot 3.3
-- Spring Cloud Stream (functional programming model: `Function`/`Consumer` beans) with the Kafka
-  binder — no manual `KafkaTemplate`/`@KafkaListener` wiring
-- PostgreSQL — one logical database per service (`order_db`, `inventory_db`, `payment_db`),
-  enforcing that services never share tables
-- Docker Compose — Kafka + Zookeeper, Postgres, Kafka UI, and all four services
-- Lombok, Bean Validation, Spring Boot Actuator
-
-## Project layout
+## Architecture
 
 ```
-order-processing-system/
-├── docker-compose.yml
-├── init-db/                       # creates the 3 databases on Postgres startup
-├── order-service/                 # :8081 - REST API + saga entry/exit point
-├── inventory-service/             # :8082 - stock reservation
-├── payment-service/                # :8083 - simulated payment
-├── notification-service/          # :8084 - stateless notification fan-in
-└── test-saga.sh                   # curl smoke test walking through the whole flow
+                        ┌─────────────────┐
+                        │  order-service   │  (REST API, port 8081)
+                        │  order_db        │
+                        └────────┬─────────┘
+                                 │ publishes: order.created
+                                 ▼
+                        ┌─────────────────┐
+                        │ inventory-service│  (port 8082)
+                        │  inventory_db    │
+                        └────────┬─────────┘
+                                 │ publishes: inventory.events
+                                 │ (RESERVED or FAILED)
+                    ┌────────────┴────────────┐
+                    ▼                         ▼
+        (RESERVED — continue)      (FAILED — compensate)
+                    │                         │
+                    ▼                         ▼
+        ┌─────────────────┐         ┌──────────────────┐
+        │ payment-service  │         │  order-service    │
+        │  payment_db      │         │  marks CANCELLED  │
+        └────────┬─────────┘         └──────────────────┘
+                  │ publishes: payment.events
+                  │ (COMPLETED or FAILED)
+                  ▼
+        ┌─────────────────┐
+        │  order-service    │
+        │  marks CONFIRMED  │
+        │  (or CANCELLED)   │
+        └─────────────────┘
+
+        All services also consume relevant events into:
+        ┌──────────────────────┐
+        │ notification-service │  (port 8084)
+        │ logs/sends updates   │
+        └──────────────────────┘
 ```
 
-## Running it
+Kafka and Zookeeper coordinate messaging between all services. PostgreSQL provides a separate database per service (database-per-service pattern), and Docker Compose orchestrates startup order using healthchecks so dependent services don't start before Kafka and Postgres are actually ready.
 
-Requires Docker and Docker Compose. (Maven dependency resolution happens inside the build
-containers, so you need internet access the first time you build.)
+---
+
+## Tech Stack
+
+- **Java 17 / Spring Boot 3.5**
+- **Spring Cloud Stream** (Kafka binder, functional `Supplier`/`Function`/`Consumer` bindings — not `@KafkaListener`)
+- **Apache Kafka + Zookeeper** (Confluent images, `cp-kafka:7.6.0`)
+- **PostgreSQL 16** (one database per service)
+- **Docker Compose** for local orchestration
+- **Kafka UI** (provectuslabs) for inspecting topics/messages during development
+
+---
+
+## Services & Ports
+
+| Service               | Port | Database       | Role                                              |
+|------------------------|------|-----------------|----------------------------------------------------|
+| `order-service`         | 8081 | `order_db`       | REST API for placing orders; saga coordinator via events |
+| `inventory-service`     | 8082 | `inventory_db`   | Reserves/releases stock                            |
+| `payment-service`       | 8083 | `payment_db`     | Processes payment for reserved orders               |
+| `notification-service`  | 8084 | —                | Consumes all events, sends/logs status updates      |
+| `kafka-ui`               | 8090 | —                | Web UI for inspecting Kafka topics                  |
+| `postgres`               | 5432 | —                | Shared Postgres instance, 3 logical databases       |
+| `kafka`                  | 9092 | —                | Message broker                                       |
+| `zookeeper`               | 2181 | —                | Kafka coordination                                    |
+
+Kafka topics: `order.created`, `inventory.events`, `payment.events`
+
+---
+
+## Running Locally
 
 ```bash
-docker compose up --build
+docker-compose up -d --build
 ```
 
-This starts, in order of dependency: Zookeeper → Kafka → Kafka UI (localhost:8090) → Postgres
-(with the 3 databases pre-created) → the four Spring Boot services.
+First build takes several minutes (Maven dependency resolution per service). Subsequent builds are much faster due to Docker layer caching.
 
-Give it 30–60 seconds on first boot for Kafka and Postgres to be ready before the services finish
-connecting.
-
-### Try it
+Check everything is healthy:
 
 ```bash
-chmod +x test-saga.sh
-./test-saga.sh
+docker-compose ps
 ```
 
-Or manually:
+`postgres` and `kafka` should show `healthy` before the four application services report `Started`.
+
+---
+
+## Example: Placing an Order
 
 ```bash
-# Happy path — PROD-001 has 50 units in stock
 curl -X POST http://localhost:8081/api/orders \
   -H "Content-Type: application/json" \
-  -d '{"customerId":"CUST-100","productId":"PROD-001","quantity":2,"totalAmount":49.98}'
-
-# Check status a couple seconds later — should move to CONFIRMED (or PAYMENT_FAILED ~10% of the time,
-# since payment failure is randomly simulated to make the demo realistic)
-curl http://localhost:8081/api/orders/{id}
+  -d '{
+    "customerId": "cust-002",
+    "productId": "PROD-001",
+    "quantity": 2,
+    "totalAmount": 49.99
+  }'
 ```
 
-Watch it happen live:
+Check the resulting order status:
 
 ```bash
-docker compose logs -f order-service inventory-service payment-service notification-service
+curl http://localhost:8081/api/orders/{orderId}
 ```
 
-Or visually inspect topics/messages/consumer groups at **http://localhost:8090** (Kafka UI) —
-great for a screen recording or screenshot for your portfolio.
+### Happy path (verified)
 
-### Endpoints
+```
+order-service:        PENDING
+inventory-service:    RESERVED   (stock reserved successfully)
+payment-service:      COMPLETED  (transaction ID issued)
+order-service:        CONFIRMED
+```
 
-| Service | Endpoint | Purpose |
-|---|---|---|
-| order-service | `POST /api/orders` | Create an order (starts the saga) |
-| order-service | `GET /api/orders/{id}` | Get one order + current status |
-| order-service | `GET /api/orders` | List all orders |
-| inventory-service | `GET /api/inventory` | See current stock levels |
-| payment-service | `GET /api/payments` | See all simulated transactions |
-| payment-service | `GET /api/payments/order/{orderId}` | Transactions for one order |
+### Compensation path (verified)
 
-## Talking points for interviews
+If the requested product doesn't exist (or has insufficient stock), the saga fails gracefully instead of proceeding to payment:
 
-- **Why choreography over orchestration?** No single point of failure/bottleneck, services stay
-  loosely coupled, easy to add new consumers (notification-service) without touching upstream
-  services. Trade-off: harder to see the "whole flow" in one place, and there's no built-in
-  compensation/rollback coordinator — you'd reach for something like a Saga orchestrator
-  (Camunda, or a dedicated orchestration service) if the flow got much more complex, or if you
-  needed guaranteed compensating transactions across many steps.
-- **Database-per-service** — each service owns its schema; nothing reaches into another
-  service's tables. This is what actually makes it a microservices architecture rather than a
-  monolith with some queues bolted on.
-- **At-least-once delivery** — Kafka consumer groups here don't currently implement idempotency
-  keys, so a redelivered message could double-reserve stock or double-charge. A natural follow-up
-  improvement (and a good thing to mention proactively) is adding an idempotency/dedup table
-  keyed on `orderId` + event type before writing.
-- **Event enrichment vs. lookups** — `InventoryResultEvent` carries `customerId` and
-  `totalAmount` forward so payment-service never needs to call back to order-service. This avoids
-  synchronous service-to-service coupling but means event schemas grow; worth discussing schema
-  evolution / a schema registry (Avro + Confluent Schema Registry) as the next step.
-- **Failure simulation** — payment-service randomly fails ~10% of transactions
-  (`payment.simulated-failure-rate`) so you can demonstrate both the happy path and the
-  `PAYMENT_FAILED` path without extra tooling.
+```
+order-service:        PENDING
+inventory-service:    FAILED     (reason: Product not found)
+order-service:        CANCELLED  (statusReason: Product not found)
+payment-service:      never triggered
+```
 
-## Possible extensions (good "what would you add next" answers)
+This is the core of the saga pattern — each service reacts only to what actually happened upstream, and failures propagate backward as compensating status updates rather than leaving orders in an inconsistent state.
 
-- Idempotent consumers (dedup table or Kafka transactional producer + `read_committed`)
-- Dead-letter topics for poison messages
-- An outbox pattern in order-service instead of dual-writing to Postgres + Kafka in one method
-- Schema registry (Avro/Protobuf) instead of raw JSON
-- A saga orchestrator variant for comparison, if you want to show both patterns
-- Testcontainers-based integration tests spinning up real Kafka + Postgres per service
+---
+
+## Known Limitations / Next Steps
+
+- No automated test suite yet (unit/integration tests) — verification so far has been manual, via API calls and direct Postgres/Kafka inspection.
+- No payment failure → inventory release compensation tested yet (only inventory failure is currently exercised).
+- No retry/dead-letter-queue handling for Kafka consumer failures.
+- No authentication/authorization on the REST APIs.
+- No centralized logging/tracing across services (e.g. distributed tracing via Sleuth/Zipkin) — currently correlated manually via `orderId` in logs.
+
+---
+
+## Author
+
+Shivansh Mishra
