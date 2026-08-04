@@ -137,12 +137,26 @@ payment-service:      never triggered
 
 This is the core of the saga pattern — each service reacts only to what actually happened upstream, and failures propagate backward as compensating status updates rather than leaving orders in an inconsistent state.
 
+### Payment failure path (verified)
+
+`payment-service` simulates gateway declines via a configurable failure rate (`payment.simulated-failure-rate`, default 10%). Forcing this to 100% for testing confirms the order correctly reflects the decline:
+
+```
+order-service:        PENDING
+inventory-service:    RESERVED       (stock reserved successfully)
+payment-service:      FAILED         (reason: Simulated gateway decline)
+order-service:        PAYMENT_FAILED (statusReason: Simulated gateway decline)
+```
+
+Note this lands on a distinct `PAYMENT_FAILED` status rather than the `CANCELLED` status used for inventory failures — the order model currently has more than one terminal-failure state rather than a single unified one. Worth normalizing in a future pass.
+
 ---
 
 ## Known Limitations / Next Steps
 
+- **Inventory reservation reconciliation drift under load.** Load-testing with ~40 concurrent orders followed by a forced payment failure left `inventory_item.reserved_qty` and `available_qty` not fully reconciled (`reserved_qty` remained non-zero after all orders reached a terminal state, and the two columns didn't sum back to the starting stock level). This suggests the reservation-release step in `inventory-service` doesn't reliably fire for every terminal event under concurrent processing — likely a race condition or a missed/duplicated Kafka event during a consumer rebalance. Root cause not yet isolated; next step is adding structured logging around the reservation-release consumer and re-running the same load test with event-level tracing.
+- Order status model has multiple terminal-failure states (`CANCELLED` for inventory issues, `PAYMENT_FAILED` for payment issues) rather than one consistent terminal-failure status — works, but inconsistent naming worth cleaning up.
 - No automated test suite yet (unit/integration tests) — verification so far has been manual, via API calls and direct Postgres/Kafka inspection.
-- No payment failure → inventory release compensation tested yet (only inventory failure is currently exercised).
 - No retry/dead-letter-queue handling for Kafka consumer failures.
 - No authentication/authorization on the REST APIs.
 - No centralized logging/tracing across services (e.g. distributed tracing via Sleuth/Zipkin) — currently correlated manually via `orderId` in logs.
